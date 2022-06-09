@@ -1,1 +1,2 @@
-# go-network
+# 목적
+[`go 언어를 활용한 네트워크 프로그래밍`](https://jpub.tistory.com/1237)을 공부하며 정리한 코드입니다.
