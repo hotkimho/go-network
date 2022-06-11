@@ -1,7 +1,7 @@
 package main
 
-import "fmt"
+import "network/tcp"
 
 func main() {
-	fmt.Println("qwe")
+	tcp.Listener()
 }
