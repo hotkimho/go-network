@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -170,4 +171,62 @@ func DialContextCancel() {
 	if ctx.Err() != context.Canceled {
 		fmt.Printf("expected canceld context: actual: %q", ctx.Err())
 	}
+}
+
+//다중 연결 다이어러 취소하기
+func DialContextCancelFanOut() {
+	ctx, cancel := context.WithDeadline(
+		context.Background(),
+		time.Now().Add(10*time.Second),
+	)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:3000")
+	if err != nil {
+		fmt.Println("net.Listen Error")
+		return
+	}
+	defer listener.Close()
+
+	go func() {
+		fmt.Println("connect listener")
+		conn, err := listener.Accept()
+		if err == nil {
+			conn.Close()
+			fmt.Println("close listener")
+		}
+	}()
+	dial := func(ctx context.Context, address string, response chan int,
+		id int, wg *sync.WaitGroup) {
+		defer func() {
+			wg.Done()
+			fmt.Println(id, " end dial")
+		}()
+		fmt.Println(id, " start dial")
+		var d net.Dialer
+		c, err := d.DialContext(ctx, "tcp", address)
+		if err != nil {
+			return
+		}
+		c.Close()
+		select {
+		case <-ctx.Done():
+		case response <- id:
+		}
+	}
+	res := make(chan int)
+	var wg sync.WaitGroup
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go dial(ctx, listener.Addr().String(), res, i+1, &wg)
+	}
+	response := <-res
+	cancel()
+	wg.Wait()
+	close(res)
+
+	if ctx.Err() != context.Canceled {
+		fmt.Printf("expected canceld context; actual:%s", ctx.Err())
+	}
+	fmt.Printf("Dialer %d retrieved thr resource\n", response)
 }
