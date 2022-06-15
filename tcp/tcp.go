@@ -112,6 +112,7 @@ func TestDialTimeout() {
 	}
 }
 
+//Context를 이용한 데드라인
 func DialContext() {
 	deadLine := time.Now().Add(3 * time.Second)
 	ctx, cancel := context.WithDeadline(context.Background(), deadLine)
@@ -229,4 +230,115 @@ func DialContextCancelFanOut() {
 		fmt.Printf("expected canceld context; actual:%s", ctx.Err())
 	}
 	fmt.Printf("Dialer %d retrieved thr resource\n", response)
+}
+
+func Deadline() {
+	sync := make(chan struct{})
+	listener, err := net.Listen("tcp", "127.0.0.1:3000")
+	if err != nil {
+		fmt.Println("net.Listen Error")
+		return
+	}
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("listener.Accept Error")
+			return
+		}
+		fmt.Println("connect")
+		defer func() {
+			conn.Close()
+			close(sync)
+		}()
+
+		err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		buf := make([]byte, 1)
+		_, err = conn.Read(buf)
+		nErr, ok := err.(net.Error)
+		fmt.Println(err)
+		if !ok || !nErr.Timeout() {
+			fmt.Printf("expected timeout error; actual: %v\n", err)
+		}
+		sync <- struct{}{}
+
+		err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		_, err = conn.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	}()
+
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer conn.Close()
+
+	<-sync
+	_, err = conn.Write([]byte("1"))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	buf := make([]byte, 1)
+	_, err = conn.Read(buf)
+	if err != io.EOF {
+		fmt.Printf("expected server termination; actual: %v\n", err)
+	}
+}
+
+//heartbeat
+const defaultPingInterval = 30 * time.Second
+
+func Pinger(ctx context.Context, w io.Writer, reset <-chan time.Duration) {
+	var interval time.Duration
+	select {
+	case <-ctx.Done():
+		return
+	case interval = <-reset:
+	default:
+	}
+	if interval <= 0 {
+		interval = defaultPingInterval
+	}
+
+	timer := time.NewTimer(interval)
+	defer func() {
+		if !timer.Stop() {
+			<-timer.C
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case newInterval := <-reset:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			if newInterval > 0 {
+				interval = newInterval
+			}
+		case <-timer.C:
+			if _, err := w.Write([]byte("ping")); err != nil {
+				return
+			}
+		}
+		_ = timer.Reset(interval)
+	}
 }
